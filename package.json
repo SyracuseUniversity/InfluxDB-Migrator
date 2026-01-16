@@ -1,0 +1,35 @@
+{
+  "name": "influxdb-migrator",
+  "version": "1.0.0",
+  "description": "CLI tool for migrating InfluxDB 2.x to 3.x with Grafana dashboard transformation",
+  "main": "dist/cli.js",
+  "bin": {
+    "influx-migrate": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "dev": "ts-node src/cli.ts",
+    "test": "echo \"Tests not yet implemented\" && exit 0"
+  },
+  "keywords": [
+    "influxdb",
+    "migration",
+    "grafana",
+    "cli"
+  ],
+  "author": "Josh",
+  "license": "MIT",
+  "dependencies": {
+    "@influxdata/influxdb-client": "^1.33.2",
+    "@influxdata/influxdb-client-apis": "^1.33.2",
+    "axios": "^1.13.2",
+    "commander": "^11.1.0",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.6",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

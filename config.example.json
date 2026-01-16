@@ -1,0 +1,27 @@
+{
+  "source": {
+    "host": "localhost",
+    "port": 8086,
+    "token": "your-influxdb-2x-token-here",
+    "org": "your-organization",
+    "bucket": "your-bucket-name"
+  },
+  "destination": {
+    "host": "localhost",
+    "port": 8086,
+    "token": "your-influxdb-3x-token-here",
+    "database": "your-database-name"
+  },
+  "grafana": {
+    "url": "http://localhost:3000",
+    "token": "your-grafana-api-token",
+    "influx2xDatasource": "influxdb-2x-datasource-uid",
+    "influx3xDatasource": "influxdb-3x-datasource-uid"
+  },
+  "migration": {
+    "batchSize": 10000,
+    "checkpointInterval": 100000,
+    "checkpointPath": "./checkpoints",
+    "verify": true
+  }
+}
