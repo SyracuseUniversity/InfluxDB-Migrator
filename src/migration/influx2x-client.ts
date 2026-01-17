@@ -55,8 +55,8 @@ export class Influx2xClient {
         });
         rows.push(record);
 
-        // Yield batch when reaching threshold
-        if (rows.length >= 1000) {
+        // Yield batch when reaching threshold (5000 for better performance)
+        if (rows.length >= 5000) {
           const batchToYield = [...rows];
           rows = [];
 
