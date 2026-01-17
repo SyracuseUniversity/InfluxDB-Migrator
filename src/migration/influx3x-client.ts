@@ -133,7 +133,35 @@ export class Influx3xClient {
       if (axios.isAxiosError(error) && error.response) {
         console.error('HTTP Error Response:', JSON.stringify(error.response.data, null, 2));
       }
-      throw new Error(`Write failed: ${error instanceof Error ? error.message : String(error)}`);
+
+      // Try writing lines individually to find the problematic one
+      console.log('Batch write failed. Attempting individual writes to isolate bad lines...');
+      let successCount = 0;
+      let failCount = 0;
+
+      for (let i = 0; i < lines.length; i++) {
+        try {
+          await axios.post(url, lines[i], { headers });
+          successCount++;
+        } catch (lineError) {
+          failCount++;
+          if (failCount <= 5) { // Only log first 5 failures
+            console.error(`Failed line ${i + 1}: ${lines[i]}`);
+            if (axios.isAxiosError(lineError) && lineError.response) {
+              console.error(`Error: ${JSON.stringify(lineError.response.data)}`);
+            }
+          }
+        }
+      }
+
+      console.log(`Individual write results: ${successCount} succeeded, ${failCount} failed`);
+
+      if (successCount === 0) {
+        throw new Error(`Write failed: All ${lines.length} lines failed to write`);
+      }
+
+      // If some succeeded, don't throw - continue migration
+      console.log(`Continuing migration with ${successCount} successfully written points`);
     }
   }
 
