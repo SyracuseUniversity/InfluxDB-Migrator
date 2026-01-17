@@ -147,6 +147,13 @@ export class QueryTransformer {
         const fieldMatch = f.match(/_field\s*==\s*"([^"]+)"/);
         if (fieldMatch) {
           parsed.fields.push(fieldMatch[1]);
+          return;
+        }
+
+        // Handle bracket notation: r["_field"] == "field-name"
+        const bracketFieldMatch = f.match(/\["_field"\]\s*==\s*"([^"]+)"/);
+        if (bracketFieldMatch) {
+          parsed.fields.push(bracketFieldMatch[1]);
         }
       });
 
@@ -229,18 +236,6 @@ export class QueryTransformer {
       // Multiple measurements in OR condition
       measurementName = `(${parsed.rawParts.measurements.map((m: string) => `"${m}"`).join(' OR ')})`;
       result.warnings.push('Multiple measurements detected - may need manual adjustment');
-    }
-
-    if (!measurementName) {
-      // Try to find a tag filter that might indicate measurement
-      const typeFilter = parsed.filters.find(f => f.includes('measurement-type'));
-      if (typeFilter) {
-        const typeMatch = typeFilter.match(/r\["measurement-type"\]\s*==\s*"([^"]+)"/);
-        if (typeMatch) {
-          measurementName = typeMatch[1];
-          result.warnings.push(`Using measurement-type tag value "${typeMatch[1]}" as table name - verify this is correct`);
-        }
-      }
     }
 
     if (measurementName) {
