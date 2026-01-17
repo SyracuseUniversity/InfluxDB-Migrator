@@ -367,10 +367,10 @@ export class QueryTransformer {
 
     const trimmed = expr.trim();
     if (trimmed === 'v.windowPeriod' || trimmed === '$__interval') {
-      return "INTERVAL '$__interval_ms millisecond'";
+      return 'INTERVAL $__interval_ms MILLISECOND';
     }
     if (trimmed === '$__interval_ms') {
-      return "INTERVAL '$__interval_ms millisecond'";
+      return 'INTERVAL $__interval_ms MILLISECOND';
     }
 
     const intervalMatch = trimmed.match(/^(\d+)([smhdw])$/);
@@ -384,7 +384,7 @@ export class QueryTransformer {
         d: 'days',
         w: 'weeks'
       };
-      return `INTERVAL '${value} ${unitMap[unit]}'`;
+      return `INTERVAL ${value} ${unitMap[unit]}`;
     }
 
     return null;
