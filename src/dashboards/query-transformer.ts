@@ -117,9 +117,27 @@ export class QueryTransformer {
       // Extract measurement filter
       const measurementFilter = parsed.filters.find(f => f.includes('_measurement'));
       if (measurementFilter) {
+        // Handle simple case: r._measurement == "measurement-name"
         const measMatch = measurementFilter.match(/_measurement\s*==\s*"([^"]+)"/);
         if (measMatch) {
           parsed.measurement = measMatch[1];
+        } else {
+          // Handle OR case: r._measurement == "prod-line0" or r._measurement == "prod-line1"
+          const orMatches = measurementFilter.matchAll(/_measurement\s*==\s*"([^"]+)"/g);
+          const measurements = Array.from(orMatches, m => m[1]);
+          if (measurements.length > 0) {
+            // Store multiple measurements for later handling
+            parsed.rawParts.measurements = measurements;
+          }
+        }
+      }
+
+      // Also check bracket notation: r["_measurement"]
+      const bracketMeasFilter = parsed.filters.find(f => f.includes('["_measurement"]'));
+      if (bracketMeasFilter && !parsed.measurement) {
+        const bracketMatch = bracketMeasFilter.match(/\["_measurement"\]\s*==\s*"([^"]+)"/);
+        if (bracketMatch) {
+          parsed.measurement = bracketMatch[1];
         }
       }
 
@@ -136,12 +154,20 @@ export class QueryTransformer {
       if (query.includes('aggregateWindow') || query.includes('mean(') ||
           query.includes('sum(') || query.includes('count(') ||
           query.includes('max(') || query.includes('min(')) {
-        parsed.isSimple = false;
 
-        // Try to extract aggregation type
-        const aggMatches = query.match(/\b(mean|sum|count|max|min|median|stddev)\b/g);
-        if (aggMatches) {
-          parsed.aggregations = [...new Set(aggMatches)];
+        // Extract aggregateWindow parameters
+        const aggWindowMatch = query.match(/aggregateWindow\s*\(\s*every\s*:\s*([^,]+),\s*fn\s*:\s*(\w+)/);
+        if (aggWindowMatch) {
+          const interval = aggWindowMatch[1].trim();
+          const fn = aggWindowMatch[2].trim();
+          parsed.aggregations = [fn];
+          parsed.rawParts.windowInterval = interval;
+        } else {
+          // Try to extract aggregation type from standalone functions
+          const aggMatches = query.match(/\b(mean|sum|count|max|min|median|stddev)\b/g);
+          if (aggMatches) {
+            parsed.aggregations = [...new Set(aggMatches)];
+          }
         }
       }
 
@@ -174,28 +200,54 @@ export class QueryTransformer {
 
   private buildSQLQuery(parsed: ParsedFluxQuery, result: TransformResult): string {
     const parts: string[] = [];
+    const hasAggregation = parsed.aggregations.length > 0;
 
     // SELECT clause
-    if (parsed.aggregations.length > 0) {
-      const aggClauses = parsed.aggregations.map(agg => {
-        if (parsed.fields.length > 0) {
-          return parsed.fields.map(field => `${agg.toUpperCase()}("${field}") AS ${field}_${agg}`).join(', ');
-        }
-        return `${agg.toUpperCase()}(*) AS ${agg}_value`;
-      });
-      parts.push(`SELECT ${aggClauses.join(', ')}`);
+    if (hasAggregation) {
+      if (parsed.fields.length > 0) {
+        // Aggregate specific fields
+        const aggClauses = parsed.fields.map(field => {
+          const agg = parsed.aggregations[0]; // Use first aggregation
+          return `${agg.toUpperCase()}("${field}") AS "${field}"`;
+        });
+        parts.push(`SELECT ${aggClauses.join(', ')}`);
+      } else {
+        const agg = parsed.aggregations[0];
+        parts.push(`SELECT ${agg.toUpperCase()}(value) AS value`);
+      }
     } else if (parsed.fields.length > 0) {
       parts.push(`SELECT ${parsed.fields.map(f => `"${f}"`).join(', ')}`);
     } else {
       parts.push('SELECT *');
     }
 
-    // FROM clause
-    if (parsed.measurement) {
-      parts.push(`FROM "${parsed.measurement}"`);
+    // FROM clause - try to determine measurement name
+    let measurementName = parsed.measurement;
+
+    // If no measurement, try to guess from filters
+    if (!measurementName && parsed.rawParts.measurements && parsed.rawParts.measurements.length > 0) {
+      // Multiple measurements in OR condition
+      measurementName = `(${parsed.rawParts.measurements.map(m => `"${m}"`).join(' OR ')})`;
+      result.warnings.push('Multiple measurements detected - may need manual adjustment');
+    }
+
+    if (!measurementName) {
+      // Try to find a tag filter that might indicate measurement
+      const typeFilter = parsed.filters.find(f => f.includes('measurement-type'));
+      if (typeFilter) {
+        const typeMatch = typeFilter.match(/r\["measurement-type"\]\s*==\s*"([^"]+)"/);
+        if (typeMatch) {
+          measurementName = typeMatch[1];
+          result.warnings.push(`Using measurement-type tag value "${typeMatch[1]}" as table name - verify this is correct`);
+        }
+      }
+    }
+
+    if (measurementName) {
+      parts.push(`FROM ${measurementName}`);
     } else {
-      parts.push(`FROM ${parsed.bucket ? `"${parsed.bucket}"` : '<MEASUREMENT_NAME>'}`);
-      result.warnings.push('Could not determine measurement name - using bucket or placeholder');
+      parts.push(`FROM "<YOUR_MEASUREMENT_NAME>"`);
+      result.warnings.push('Could not determine measurement name - replace <YOUR_MEASUREMENT_NAME> with actual table');
     }
 
     // WHERE clause
@@ -232,8 +284,23 @@ export class QueryTransformer {
       parts.push(`WHERE ${whereClauses.join(' AND ')}`);
     }
 
-    // GROUP BY clause
-    if (parsed.groupBy.length > 0) {
+    // GROUP BY clause - handle time-based aggregation
+    if (hasAggregation) {
+      // For aggregateWindow, Grafana's $__interval variable will be used
+      parts.push(`GROUP BY time($__interval)`);
+
+      // Add additional group by fields if present
+      if (parsed.groupBy.length > 0) {
+        const groupFields = parsed.groupBy
+          .filter(g => !g.startsWith('_')) // Filter out internal fields
+          .map(g => `"${g}"`)
+          .join(', ');
+
+        if (groupFields) {
+          parts[parts.length - 1] += `, ${groupFields}`;
+        }
+      }
+    } else if (parsed.groupBy.length > 0) {
       const groupFields = parsed.groupBy
         .filter(g => !g.startsWith('_')) // Filter out internal fields
         .map(g => `"${g}"`)
@@ -257,6 +324,14 @@ export class QueryTransformer {
     // Convert Flux time expressions to SQL
     if (expr === 'now()') {
       return 'NOW()';
+    }
+
+    // Handle Grafana variables
+    if (expr === 'v.timeRangeStart') {
+      return '$__timeFrom';
+    }
+    if (expr === 'v.timeRangeStop') {
+      return '$__timeTo';
     }
 
     // Handle relative time like -1h, -7d, -30m
@@ -288,8 +363,12 @@ export class QueryTransformer {
     // Convert Flux filter expressions to SQL WHERE conditions
     // This is a simplified conversion - complex expressions may need manual review
 
+    // Handle bracket notation filters like r["measurement-type"] == "inverter"
+    let converted = filter.replace(/r\["([^"]+)"\]\s*==\s*"([^"]+)"/g, '"$1" = \'$2\'');
+    converted = converted.replace(/r\["([^"]+)"\]\s*!=\s*"([^"]+)"/g, '"$1" <> \'$2\'');
+
     // Convert _value references to field names
-    let converted = filter.replace(/r\._value/g, 'value');
+    converted = converted.replace(/r\._value/g, 'value');
     converted = converted.replace(/r\.(\w+)/g, '"$1"');
 
     // Convert operators
