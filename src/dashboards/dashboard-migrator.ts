@@ -234,12 +234,22 @@ export class DashboardMigrator {
       }
 
       // Transform query if it exists
-      if (target.query) {
-        const transformed = this.queryTransformer.transform(target.query);
+      const originalQuery = this.extractTargetQuery(target);
+      if (originalQuery) {
+        const transformed = this.queryTransformer.transform(originalQuery);
         queries.push(transformed);
 
-        // Update the target with transformed query
+        // Update the target with transformed query (support SQL model fields)
         target.query = transformed.transformed;
+        target.rawSql = transformed.transformed;
+        target.queryType = 'sql';
+        target.rawQuery = true;
+      } else {
+        this.logger.warn('No query found for panel target', {
+          component: 'dashboard-migrator',
+          panelId: panel.id,
+          panelTitle: panel.title
+        });
       }
     }
 
@@ -265,6 +275,20 @@ export class DashboardMigrator {
       seen.add(uid);
       return true;
     });
+  }
+
+  private extractTargetQuery(target: QueryTarget): string | null {
+    const query = typeof target.query === 'string' ? target.query.trim() : '';
+    if (query) {
+      return query;
+    }
+
+    const rawSql = typeof (target as any).rawSql === 'string' ? (target as any).rawSql.trim() : '';
+    if (rawSql) {
+      return rawSql;
+    }
+
+    return null;
   }
 
   async generateMigrationReport(summary: MigrationSummary): Promise<string> {
