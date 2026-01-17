@@ -115,38 +115,27 @@ export class Influx3xClient {
     }
 
 
-    // Use curl via child_process - this is proven to work
+    // Use curl via child_process for reliable writes
     const body = lines.join('\n');
-    const tmpFile = '/tmp/influx_debug.txt'; // Fixed location for debugging
+    const tmpFile = path.join(os.tmpdir(), `influx_write_${process.pid}.txt`);
 
     try {
-      // Write line protocol to temp file
       fs.writeFileSync(tmpFile, body);
-      console.log(`DEBUG: Wrote ${lines.length} lines to ${tmpFile}`);
-      console.log(`DEBUG: First line: ${lines[0]}`);
 
-      // Build curl command
       const url = `http://${this.config.host}:${this.config.port}/api/v2/write?bucket=${this.config.database}&precision=ns`;
       const authHeader = this.config.token ? `-H "Authorization: Bearer ${this.config.token}"` : '';
       const curlCmd = `curl -s -w "\\n%{http_code}" -X POST "${url}" ${authHeader} -H "Content-Type: text/plain" --data-binary @${tmpFile}`;
-      console.log(`DEBUG: curl command: ${curlCmd}`);
 
-      const result = execSync(curlCmd, { encoding: 'utf-8', timeout: 60000 });
-      const lines_result = result.trim().split('\n');
-      const httpCode = lines_result[lines_result.length - 1];
-      const responseBody = lines_result.slice(0, -1).join('\n');
+      const result = execSync(curlCmd, { encoding: 'utf-8', timeout: 120000 });
+      const resultLines = result.trim().split('\n');
+      const httpCode = resultLines[resultLines.length - 1];
+      const responseBody = resultLines.slice(0, -1).join('\n');
 
-      if (httpCode === '200' || httpCode === '204') {
-        if (skippedCount > 0) {
-          console.log(`Batch complete: ${lines.length} written, ${skippedCount} skipped`);
-        }
-      } else {
+      if (httpCode !== '200' && httpCode !== '204') {
         throw new Error(`Write failed: HTTP ${httpCode} - ${responseBody}`);
       }
-    } catch (e) {
-      // Don't delete file on error so we can inspect it
-      console.log(`DEBUG: File preserved at ${tmpFile} for inspection`);
-      throw e;
+    } finally {
+      try { fs.unlinkSync(tmpFile); } catch (e) { /* ignore */ }
     }
   }
 
