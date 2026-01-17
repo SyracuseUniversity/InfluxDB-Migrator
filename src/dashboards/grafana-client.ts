@@ -79,6 +79,15 @@ export interface Datasource {
   isDefault: boolean;
 }
 
+export interface CreateDashboardResponse {
+  id: number;
+  uid: string;
+  url: string;
+  status: string;
+  version: number;
+  slug: string;
+}
+
 export class GrafanaClient {
   private client: AxiosInstance;
   private config: GrafanaConfig;
@@ -261,15 +270,17 @@ export class GrafanaClient {
         overwrite
       };
 
-      const response = await this.client.post<DashboardDetail>('/api/dashboards/db', payload);
+      const response = await this.client.post<CreateDashboardResponse>('/api/dashboards/db', payload);
 
       this.logger.info('Dashboard created', {
         component: 'grafana',
         title: dashboard.title,
-        uid: response.data.dashboard.uid
+        uid: response.data.uid
       });
 
-      return response.data;
+      // Fetch the full dashboard details using the UID
+      const fullDashboard = await this.getDashboard(response.data.uid);
+      return fullDashboard;
     } catch (error) {
       this.logger.error('Failed to create dashboard', {
         component: 'grafana',
