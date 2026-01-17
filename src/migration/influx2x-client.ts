@@ -114,10 +114,11 @@ export class Influx2xClient {
       });
     });
 
-    // Get time range
+    // Get time range - use keep() to only work with _time column to avoid schema collisions
     const timeRangeQuery = `
       from(bucket: "${this.config.bucket}")
         |> range(start: -10y)
+        |> keep(columns: ["_time"])
         |> group()
         |> min(column: "_time")
     `;
@@ -125,34 +126,45 @@ export class Influx2xClient {
     let earliest = '';
     let latest = '';
 
-    await new Promise<void>((resolve, reject) => {
-      queryApi.queryRows(timeRangeQuery, {
-        next: (row: string[], tableMeta: FluxTableMetaData) => {
-          const timeIndex = tableMeta.columns.findIndex(col => col.label === '_time');
-          if (timeIndex >= 0) earliest = row[timeIndex];
-        },
-        error: (error: Error) => reject(error),
-        complete: () => resolve()
+    try {
+      await new Promise<void>((resolve, reject) => {
+        queryApi.queryRows(timeRangeQuery, {
+          next: (row: string[], tableMeta: FluxTableMetaData) => {
+            const timeIndex = tableMeta.columns.findIndex(col => col.label === '_time');
+            if (timeIndex >= 0 && row[timeIndex]) earliest = row[timeIndex];
+          },
+          error: (error: Error) => reject(error),
+          complete: () => resolve()
+        });
       });
-    });
+    } catch (error) {
+      // If time range query fails, leave empty - migration can still proceed
+      console.warn('Could not determine earliest timestamp:', error);
+    }
 
     const latestQuery = `
       from(bucket: "${this.config.bucket}")
         |> range(start: -10y)
+        |> keep(columns: ["_time"])
         |> group()
         |> max(column: "_time")
     `;
 
-    await new Promise<void>((resolve, reject) => {
-      queryApi.queryRows(latestQuery, {
-        next: (row: string[], tableMeta: FluxTableMetaData) => {
-          const timeIndex = tableMeta.columns.findIndex(col => col.label === '_time');
-          if (timeIndex >= 0) latest = row[timeIndex];
-        },
-        error: (error: Error) => reject(error),
-        complete: () => resolve()
+    try {
+      await new Promise<void>((resolve, reject) => {
+        queryApi.queryRows(latestQuery, {
+          next: (row: string[], tableMeta: FluxTableMetaData) => {
+            const timeIndex = tableMeta.columns.findIndex(col => col.label === '_time');
+            if (timeIndex >= 0 && row[timeIndex]) latest = row[timeIndex];
+          },
+          error: (error: Error) => reject(error),
+          complete: () => resolve()
+        });
       });
-    });
+    } catch (error) {
+      // If time range query fails, leave empty - migration can still proceed
+      console.warn('Could not determine latest timestamp:', error);
+    }
 
     return {
       measurements,
