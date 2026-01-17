@@ -48,8 +48,8 @@ export class Influx3xClient {
 
     for (const record of points) {
       try {
-        // Validate measurement name exists
-        if (!record._measurement || record._measurement === '') {
+        const measurementName = this.getMeasurementName(record);
+        if (!measurementName) {
           skippedCount++;
           continue;
         }
@@ -93,6 +93,10 @@ export class Influx3xClient {
           }
         });
 
+        if (record._measurement && measurementName !== record._measurement) {
+          tags.push(`source-measurement=${this.escapeTagValue(String(record._measurement))}`);
+        }
+
         // Build field set
         const fieldValueStr = this.escapeFieldValue(fieldValue);
         const fields = `${fieldName}=${fieldValueStr}`;
@@ -102,7 +106,7 @@ export class Influx3xClient {
 
         // Build line protocol: measurement,tag1=value1,tag2=value2 field1=value1,field2=value2 timestamp
         const tagSet = tags.length > 0 ? ',' + tags.join(',') : '';
-        const line = `${record._measurement}${tagSet} ${fields} ${timestamp}`;
+        const line = `${measurementName}${tagSet} ${fields} ${timestamp}`;
         lines.push(line);
       } catch (error) {
         skippedCount++;
@@ -166,5 +170,20 @@ export class Influx3xClient {
       earliest: '',
       latest: ''
     };
+  }
+
+  private getMeasurementName(record: any): string | null {
+    const measurementType = typeof record['measurement-type'] === 'string'
+      ? record['measurement-type'].trim()
+      : '';
+    if (measurementType) {
+      return measurementType;
+    }
+
+    if (typeof record._measurement === 'string' && record._measurement.trim() !== '') {
+      return record._measurement.trim();
+    }
+
+    return null;
   }
 }

@@ -141,6 +141,16 @@ export class QueryTransformer {
         }
       }
 
+      // Extract measurement-type tag value (if present)
+      const measurementTypeFilter = parsed.filters.find(f => f.includes('measurement-type'));
+      if (measurementTypeFilter) {
+        const typeMatch = measurementTypeFilter.match(/measurement-type"\]\s*==\s*"([^"]+)"/) ||
+          measurementTypeFilter.match(/measurement-type\s*==\s*"([^"]+)"/);
+        if (typeMatch) {
+          parsed.rawParts.measurementTypeValue = typeMatch[1];
+        }
+      }
+
       // Extract field filters
       const fieldFilters = parsed.filters.filter(f => f.includes('_field'));
       fieldFilters.forEach(f => {
@@ -236,6 +246,11 @@ export class QueryTransformer {
       // Multiple measurements in OR condition
       measurementName = `(${parsed.rawParts.measurements.map((m: string) => `"${m}"`).join(' OR ')})`;
       result.warnings.push('Multiple measurements detected - may need manual adjustment');
+    }
+
+    if (!measurementName && parsed.rawParts.measurementTypeValue) {
+      measurementName = `"${parsed.rawParts.measurementTypeValue}"`;
+      result.warnings.push(`Using measurement-type value "${parsed.rawParts.measurementTypeValue}" as table name`);
     }
 
     if (measurementName) {
