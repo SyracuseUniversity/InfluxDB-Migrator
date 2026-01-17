@@ -1,6 +1,7 @@
 import { InfluxDB, Point } from '@influxdata/influxdb-client';
 import { InfluxDB3Config } from '../config/types';
 import axios from 'axios';
+import http from 'http';
 
 export class Influx3xClient {
   private client: InfluxDB;
@@ -119,24 +120,47 @@ export class Influx3xClient {
     });
     console.log(`=== END DEBUG (${lines.length} total lines) ===\n`);
 
-    // Write using HTTP API
-    // InfluxDB 3.x uses 'bucket' parameter and requires precision
-    const url = `http://${this.config.host}:${this.config.port}/api/v2/write?bucket=${this.config.database}&precision=ns`;
-    const headers: any = { 'Content-Type': 'text/plain' };
-    if (this.config.token) {
-      headers['Authorization'] = `Bearer ${this.config.token}`;
-    }
+    // Write using native HTTP API (not axios) for exact control
+    const body = lines.join('\n');
+    const path = `/api/v2/write?bucket=${this.config.database}&precision=ns`;
 
-    try {
-      await axios.post(url, lines.join('\n'), { headers });
+    const result = await new Promise<{ success: boolean; error?: string }>((resolve) => {
+      const req = http.request({
+        hostname: this.config.host,
+        port: this.config.port,
+        path: path,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Content-Length': Buffer.byteLength(body),
+          ...(this.config.token ? { 'Authorization': `Bearer ${this.config.token}` } : {})
+        }
+      }, (res) => {
+        let responseData = '';
+        res.on('data', chunk => { responseData += chunk; });
+        res.on('end', () => {
+          if (res.statusCode === 200 || res.statusCode === 204) {
+            resolve({ success: true });
+          } else {
+            resolve({ success: false, error: `${res.statusCode}: ${responseData}` });
+          }
+        });
+      });
+
+      req.on('error', (e) => {
+        resolve({ success: false, error: e.message });
+      });
+
+      req.write(body);
+      req.end();
+    });
+
+    if (result.success) {
       if (skippedCount > 0) {
         console.log(`Batch complete: ${lines.length} written, ${skippedCount} skipped`);
       }
-    } catch (error) {
-      // Log the full error response
-      if (axios.isAxiosError(error) && error.response) {
-        console.error('HTTP Error Response:', JSON.stringify(error.response.data, null, 2));
-      }
+    } else {
+      console.error('HTTP Error:', result.error);
 
       // Try writing lines individually to find the problematic one
       console.log('Batch write failed. Attempting individual writes to isolate bad lines...');
@@ -144,17 +168,43 @@ export class Influx3xClient {
       let failCount = 0;
 
       for (let i = 0; i < lines.length; i++) {
-        try {
-          await axios.post(url, lines[i], { headers });
-          successCount++;
-        } catch (lineError) {
-          failCount++;
-          if (failCount <= 5) { // Only log first 5 failures
-            console.error(`Failed line ${i + 1}: ${lines[i]}`);
-            if (axios.isAxiosError(lineError) && lineError.response) {
-              console.error(`Error: ${JSON.stringify(lineError.response.data)}`);
+        const lineBody = lines[i];
+        const lineResult = await new Promise<boolean>((resolve) => {
+          const req = http.request({
+            hostname: this.config.host,
+            port: this.config.port,
+            path: path,
+            method: 'POST',
+            headers: {
+              'Content-Type': 'text/plain; charset=utf-8',
+              'Content-Length': Buffer.byteLength(lineBody),
+              ...(this.config.token ? { 'Authorization': `Bearer ${this.config.token}` } : {})
             }
-          }
+          }, (res) => {
+            let responseData = '';
+            res.on('data', chunk => { responseData += chunk; });
+            res.on('end', () => {
+              if (res.statusCode === 200 || res.statusCode === 204) {
+                resolve(true);
+              } else {
+                if (failCount < 5) {
+                  console.error(`Failed line ${i + 1}: ${lines[i]}`);
+                  console.error(`Error: ${responseData}`);
+                }
+                resolve(false);
+              }
+            });
+          });
+
+          req.on('error', () => resolve(false));
+          req.write(lineBody);
+          req.end();
+        });
+
+        if (lineResult) {
+          successCount++;
+        } else {
+          failCount++;
         }
       }
 
@@ -164,7 +214,6 @@ export class Influx3xClient {
         throw new Error(`Write failed: All ${lines.length} lines failed to write`);
       }
 
-      // If some succeeded, don't throw - continue migration
       console.log(`Continuing migration with ${successCount} successfully written points`);
     }
   }
