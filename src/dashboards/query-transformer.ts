@@ -227,7 +227,7 @@ export class QueryTransformer {
     // If no measurement, try to guess from filters
     if (!measurementName && parsed.rawParts.measurements && parsed.rawParts.measurements.length > 0) {
       // Multiple measurements in OR condition
-      measurementName = `(${parsed.rawParts.measurements.map(m => `"${m}"`).join(' OR ')})`;
+      measurementName = `(${parsed.rawParts.measurements.map((m: string) => `"${m}"`).join(' OR ')})`;
       result.warnings.push('Multiple measurements detected - may need manual adjustment');
     }
 
