@@ -41,51 +41,73 @@ export class Influx2xClient {
     `;
 
     let rows: any[] = [];
-    const batches: any[][] = [];
-    let queryComplete = false;
+    let pendingBatch: Promise<any[]> | null = null;
+    let resolveBatch: ((batch: any[]) => void) | null = null;
     let queryError: Error | null = null;
+    let queryComplete = false;
 
     // Start the query
-    const queryPromise = new Promise<void>((resolve, reject) => {
-      queryApi.queryRows(query, {
-        next: (row: string[], tableMeta: FluxTableMetaData) => {
-          const record: any = {};
-          tableMeta.columns.forEach((col, index) => {
-            record[col.label] = row[index];
-          });
-          rows.push(record);
+    queryApi.queryRows(query, {
+      next: (row: string[], tableMeta: FluxTableMetaData) => {
+        const record: any = {};
+        tableMeta.columns.forEach((col, index) => {
+          record[col.label] = row[index];
+        });
+        rows.push(record);
 
-          // Save batch when reaching threshold
-          if (rows.length >= 1000) {
-            batches.push([...rows]);
-            rows = [];
+        // Yield batch when reaching threshold
+        if (rows.length >= 1000) {
+          const batchToYield = [...rows];
+          rows = [];
+
+          if (resolveBatch) {
+            resolveBatch(batchToYield);
+            resolveBatch = null;
+            pendingBatch = null;
           }
-        },
-        error: (error: Error) => {
-          queryError = error;
-          reject(error);
-        },
-        complete: () => {
-          if (rows.length > 0) {
-            batches.push([...rows]);
-          }
-          queryComplete = true;
-          resolve();
         }
-      });
+      },
+      error: (error: Error) => {
+        queryError = error;
+        if (resolveBatch) {
+          resolveBatch([]);
+          resolveBatch = null;
+        }
+      },
+      complete: () => {
+        queryComplete = true;
+
+        // Resolve any pending batch with remaining rows
+        if (resolveBatch) {
+          resolveBatch(rows.length > 0 ? [...rows] : []);
+          resolveBatch = null;
+        }
+      }
     });
 
-    // Wait for query to complete
-    try {
-      await queryPromise;
-    } catch (error) {
-      if (queryError) throw queryError;
-      throw error;
-    }
+    // Yield batches as they become available
+    while (!queryComplete || rows.length > 0) {
+      if (!pendingBatch) {
+        pendingBatch = new Promise<any[]>((resolve) => {
+          resolveBatch = resolve;
+        });
+      }
 
-    // Yield all batches
-    for (const batch of batches) {
-      yield batch;
+      const batch = await pendingBatch;
+      pendingBatch = null;
+
+      if (queryError) {
+        throw queryError;
+      }
+
+      if (batch.length > 0) {
+        yield batch;
+      }
+
+      // If query is complete and we just yielded the last batch, break
+      if (queryComplete && batch.length === 0) {
+        break;
+      }
     }
   }
 
