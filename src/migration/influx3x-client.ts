@@ -24,72 +24,95 @@ export class Influx3xClient {
 
   async writeBatch(points: any[]): Promise<void> {
     const writeApi = this.client.getWriteApi('', this.config.database, 'ns');
+    let skippedCount = 0;
 
     for (const record of points) {
-      const point = new Point(record._measurement)
-        .timestamp(new Date(record._time));
-
-      // Handle _field and _value from InfluxDB 2.x
-      // In 2.x, data comes as: _field="P", _value=123.45
-      // In 3.x, we want: P=123.45 as a field
-      const fieldName = record._field;
-      let fieldValue = record._value;
-      let hasField = false;
-
-      if (fieldName && fieldValue !== undefined && fieldValue !== null && fieldValue !== '') {
-        // Try to parse string numbers to actual numbers
-        if (typeof fieldValue === 'string') {
-          const parsedNum = parseFloat(fieldValue);
-          if (!isNaN(parsedNum)) {
-            fieldValue = parsedNum;
-          }
+      try {
+        // Validate measurement name exists
+        if (!record._measurement || record._measurement === '') {
+          skippedCount++;
+          continue;
         }
 
-        // Add the field using the _field name and _value
-        if (typeof fieldValue === 'number') {
-          if (Number.isInteger(fieldValue)) {
-            point.intField(fieldName, fieldValue);
+        const point = new Point(record._measurement)
+          .timestamp(new Date(record._time));
+
+        // Handle _field and _value from InfluxDB 2.x
+        // In 2.x, data comes as: _field="P", _value=123.45
+        // In 3.x, we want: P=123.45 as a field
+        const fieldName = record._field;
+        let fieldValue = record._value;
+        let hasField = false;
+
+        if (fieldName && fieldValue !== undefined && fieldValue !== null && fieldValue !== '') {
+          // Try to parse string numbers to actual numbers
+          if (typeof fieldValue === 'string') {
+            const trimmed = fieldValue.trim();
+            if (trimmed !== '') {
+              const parsedNum = parseFloat(trimmed);
+              if (!isNaN(parsedNum)) {
+                fieldValue = parsedNum;
+              } else {
+                fieldValue = trimmed;
+              }
+            } else {
+              // Empty string after trim - skip this point
+              skippedCount++;
+              continue;
+            }
+          }
+
+          // Add the field using the _field name and _value
+          if (typeof fieldValue === 'number') {
+            if (Number.isInteger(fieldValue)) {
+              point.intField(fieldName, fieldValue);
+              hasField = true;
+            } else {
+              point.floatField(fieldName, fieldValue);
+              hasField = true;
+            }
+          } else if (typeof fieldValue === 'boolean' || fieldValue === 'true' || fieldValue === 'false') {
+            const boolVal = fieldValue === true || fieldValue === 'true';
+            point.booleanField(fieldName, boolVal);
             hasField = true;
-          } else {
-            point.floatField(fieldName, fieldValue);
+          } else if (typeof fieldValue === 'string' && fieldValue.length > 0) {
+            point.stringField(fieldName, fieldValue);
             hasField = true;
           }
-        } else if (typeof fieldValue === 'boolean' || fieldValue === 'true' || fieldValue === 'false') {
-          const boolVal = fieldValue === true || fieldValue === 'true';
-          point.booleanField(fieldName, boolVal);
-          hasField = true;
-        } else if (typeof fieldValue === 'string') {
-          point.stringField(fieldName, fieldValue);
-          hasField = true;
-        }
-      }
-
-      // Skip this point if it has no fields (InfluxDB requires at least one field)
-      if (!hasField) {
-        continue;
-      }
-
-      // Add tags (non-underscore fields that aren't system fields)
-      Object.keys(record).forEach(key => {
-        if (key.startsWith('_') || key === 'result' || key === 'table') {
-          return; // Skip system fields
         }
 
-        const value = record[key];
-        // All non-system fields from 2.x are tags in 3.x
-        if (value !== undefined && value !== null && value !== '') {
-          if (typeof value === 'string') {
-            point.tag(key, value);
-          } else if (typeof value === 'number') {
-            // Convert numeric tags to strings
-            point.tag(key, value.toString());
-          } else if (typeof value === 'boolean') {
-            point.tag(key, value.toString());
+        // Skip this point if it has no fields (InfluxDB requires at least one field)
+        if (!hasField) {
+          skippedCount++;
+          continue;
+        }
+
+        // Add tags (non-underscore fields that aren't system fields)
+        Object.keys(record).forEach(key => {
+          if (key.startsWith('_') || key === 'result' || key === 'table') {
+            return; // Skip system fields
           }
-        }
-      });
 
-      writeApi.writePoint(point);
+          const value = record[key];
+          // All non-system fields from 2.x are tags in 3.x
+          if (value !== undefined && value !== null) {
+            const strValue = String(value).trim();
+            if (strValue !== '') {
+              point.tag(key, strValue);
+            }
+          }
+        });
+
+        writeApi.writePoint(point);
+      } catch (error) {
+        // Skip malformed points but log them
+        console.warn(`Skipping malformed point: ${error instanceof Error ? error.message : String(error)}`);
+        skippedCount++;
+      }
+    }
+
+    if (skippedCount > 0) {
+      console.log(`Skipped ${skippedCount} points with no valid fields`);
     }
 
     await writeApi.close();
