@@ -1,5 +1,6 @@
 import { InfluxDB, Point } from '@influxdata/influxdb-client';
 import { InfluxDB3Config } from '../config/types';
+import axios from 'axios';
 
 export class Influx3xClient {
   private client: InfluxDB;
@@ -22,122 +23,105 @@ export class Influx3xClient {
     }
   }
 
+  private escapeTagValue(value: string): string {
+    // Escape special characters in tag values
+    return value.replace(/[, =]/g, '\\$&');
+  }
+
+  private escapeFieldValue(value: any): string {
+    if (typeof value === 'string') {
+      // String fields must be quoted and escaped
+      return `"${value.replace(/"/g, '\\"')}"`;
+    }
+    return String(value);
+  }
+
   async writeBatch(points: any[]): Promise<void> {
+    const lines: string[] = [];
     let skippedCount = 0;
-    let successCount = 0;
-    let firstError = true;
 
     for (const record of points) {
-      const writeApi = this.client.getWriteApi('', this.config.database, 'ns');
-
       try {
-        // Debug: log first record to see what we're working with
-        if (successCount === 0 && skippedCount === 0) {
-          console.log('First record:', JSON.stringify(record, null, 2));
-        }
-
         // Validate measurement name exists
         if (!record._measurement || record._measurement === '') {
           skippedCount++;
-          await writeApi.close();
           continue;
         }
-
-        const point = new Point(record._measurement)
-          .timestamp(new Date(record._time));
 
         // Handle _field and _value from InfluxDB 2.x
-        // In 2.x, data comes as: _field="P", _value=123.45
-        // In 3.x, we want: P=123.45 as a field
         const fieldName = record._field;
         let fieldValue = record._value;
-        let hasField = false;
 
-        if (fieldName && fieldValue !== undefined && fieldValue !== null && fieldValue !== '') {
-          // Try to parse string numbers to actual numbers
-          if (typeof fieldValue === 'string') {
-            const trimmed = fieldValue.trim();
-            if (trimmed !== '') {
-              const parsedNum = parseFloat(trimmed);
-              if (!isNaN(parsedNum)) {
-                fieldValue = parsedNum;
-              } else {
-                fieldValue = trimmed;
-              }
-            } else {
-              // Empty string after trim - skip this point
-              skippedCount++;
-              await writeApi.close();
-              continue;
-            }
-          }
-
-          // Add the field using the _field name and _value
-          if (typeof fieldValue === 'number') {
-            if (Number.isInteger(fieldValue)) {
-              point.intField(fieldName, fieldValue);
-              hasField = true;
-            } else {
-              point.floatField(fieldName, fieldValue);
-              hasField = true;
-            }
-          } else if (typeof fieldValue === 'boolean' || fieldValue === 'true' || fieldValue === 'false') {
-            const boolVal = fieldValue === true || fieldValue === 'true';
-            point.booleanField(fieldName, boolVal);
-            hasField = true;
-          } else if (typeof fieldValue === 'string' && fieldValue.length > 0) {
-            point.stringField(fieldName, fieldValue);
-            hasField = true;
-          }
-        }
-
-        // Skip this point if it has no fields (InfluxDB requires at least one field)
-        if (!hasField) {
+        if (!fieldName || fieldValue === undefined || fieldValue === null || fieldValue === '') {
           skippedCount++;
-          await writeApi.close();
           continue;
         }
 
-        // Add tags (non-underscore fields that aren't system fields)
+        // Try to parse string numbers to actual numbers
+        if (typeof fieldValue === 'string') {
+          const trimmed = fieldValue.trim();
+          if (trimmed === '') {
+            skippedCount++;
+            continue;
+          }
+          const parsedNum = parseFloat(trimmed);
+          if (!isNaN(parsedNum)) {
+            fieldValue = parsedNum;
+          } else {
+            fieldValue = trimmed;
+          }
+        }
+
+        // Build tag set
+        const tags: string[] = [];
         Object.keys(record).forEach(key => {
           if (key.startsWith('_') || key === 'result' || key === 'table') {
-            return; // Skip system fields
+            return;
           }
-
           const value = record[key];
-          // All non-system fields from 2.x are tags in 3.x
           if (value !== undefined && value !== null) {
             const strValue = String(value).trim();
             if (strValue !== '') {
-              point.tag(key, strValue);
+              tags.push(`${key}=${this.escapeTagValue(strValue)}`);
             }
           }
         });
 
-        writeApi.writePoint(point);
-        await writeApi.close();
-        successCount++;
+        // Build field set
+        const fieldValueStr = this.escapeFieldValue(fieldValue);
+        const fields = `${fieldName}=${fieldValueStr}`;
+
+        // Build timestamp (nanoseconds)
+        const timestamp = new Date(record._time).getTime() * 1000000;
+
+        // Build line protocol: measurement,tag1=value1,tag2=value2 field1=value1,field2=value2 timestamp
+        const tagSet = tags.length > 0 ? ',' + tags.join(',') : '';
+        const line = `${record._measurement}${tagSet} ${fields} ${timestamp}`;
+        lines.push(line);
       } catch (error) {
-        // Skip malformed points but log them
-        if (firstError) {
-          console.error('First error details:');
-          console.error('Record:', JSON.stringify(record, null, 2));
-          console.error('Error:', error);
-          firstError = false;
-        } else if (skippedCount < 10) {
-          console.warn(`Skipping malformed point: ${error instanceof Error ? error.message : String(error)}`);
-        }
         skippedCount++;
-        try {
-          await writeApi.close();
-        } catch (e) {
-          // Ignore close errors
-        }
       }
     }
 
-    if (skippedCount > 0) {
-      console.log(`Batch complete: ${successCount} written, ${skippedCount} skipped`);
+    if (lines.length === 0) {
+      console.log(`Batch skipped: all ${skippedCount} points invalid`);
+      return;
+    }
+
+    // Write using HTTP API
+    const url = `http://${this.config.host}:${this.config.port}/api/v2/write?db=${this.config.database}`;
+    const headers: any = { 'Content-Type': 'text/plain' };
+    if (this.config.token) {
+      headers['Authorization'] = `Bearer ${this.config.token}`;
+    }
+
+    try {
+      await axios.post(url, lines.join('\n'), { headers });
+      if (skippedCount > 0) {
+        console.log(`Batch complete: ${lines.length} written, ${skippedCount} skipped`);
+      }
+    } catch (error) {
+      throw new Error(`Write failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
