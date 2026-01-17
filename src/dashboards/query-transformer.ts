@@ -281,8 +281,16 @@ export class QueryTransformer {
 
     // GROUP BY clause - handle time-based aggregation
     if (hasAggregation) {
-      // For aggregateWindow, Grafana's $__interval variable will be used
-      parts.push(`GROUP BY time($__interval)`);
+      const intervalExpr = this.convertIntervalExpression(parsed.rawParts.windowInterval);
+      if (intervalExpr) {
+        parts.push(`GROUP BY date_bin(${intervalExpr}, time)`);
+        if (intervalExpr.includes('$__interval')) {
+          result.warnings.push('Using Grafana $__interval in date_bin; verify interval format is supported by InfluxDB 3.x');
+        }
+      } else {
+        parts.push(`GROUP BY date_bin(INTERVAL '1 minute', time)`);
+        result.warnings.push('No window interval detected; defaulting to 1 minute for date_bin');
+      }
 
       // Add additional group by fields if present
       if (parsed.groupBy.length > 0) {
@@ -352,6 +360,31 @@ export class QueryTransformer {
 
     // Default: return as-is and let the database handle it
     return expr;
+  }
+
+  private convertIntervalExpression(expr?: string): string | null {
+    if (!expr) return null;
+
+    const trimmed = expr.trim();
+    if (trimmed === 'v.windowPeriod' || trimmed === '$__interval') {
+      return "INTERVAL '$__interval'";
+    }
+
+    const intervalMatch = trimmed.match(/^(\d+)([smhdw])$/);
+    if (intervalMatch) {
+      const value = intervalMatch[1];
+      const unit = intervalMatch[2];
+      const unitMap: { [key: string]: string } = {
+        s: 'seconds',
+        m: 'minutes',
+        h: 'hours',
+        d: 'days',
+        w: 'weeks'
+      };
+      return `INTERVAL '${value} ${unitMap[unit]}'`;
+    }
+
+    return null;
   }
 
   private convertFilter(filter: string): string | null {
