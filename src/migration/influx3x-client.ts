@@ -25,11 +25,17 @@ export class Influx3xClient {
   async writeBatch(points: any[]): Promise<void> {
     let skippedCount = 0;
     let successCount = 0;
+    let firstError = true;
 
     for (const record of points) {
       const writeApi = this.client.getWriteApi('', this.config.database, 'ns');
 
       try {
+        // Debug: log first record to see what we're working with
+        if (successCount === 0 && skippedCount === 0) {
+          console.log('First record:', JSON.stringify(record, null, 2));
+        }
+
         // Validate measurement name exists
         if (!record._measurement || record._measurement === '') {
           skippedCount++;
@@ -113,7 +119,12 @@ export class Influx3xClient {
         successCount++;
       } catch (error) {
         // Skip malformed points but log them
-        if (skippedCount < 10) {
+        if (firstError) {
+          console.error('First error details:');
+          console.error('Record:', JSON.stringify(record, null, 2));
+          console.error('Error:', error);
+          firstError = false;
+        } else if (skippedCount < 10) {
           console.warn(`Skipping malformed point: ${error instanceof Error ? error.message : String(error)}`);
         }
         skippedCount++;
