@@ -23,14 +23,17 @@ export class Influx3xClient {
   }
 
   async writeBatch(points: any[]): Promise<void> {
-    const writeApi = this.client.getWriteApi('', this.config.database, 'ns');
     let skippedCount = 0;
+    let successCount = 0;
 
     for (const record of points) {
+      const writeApi = this.client.getWriteApi('', this.config.database, 'ns');
+
       try {
         // Validate measurement name exists
         if (!record._measurement || record._measurement === '') {
           skippedCount++;
+          await writeApi.close();
           continue;
         }
 
@@ -58,6 +61,7 @@ export class Influx3xClient {
             } else {
               // Empty string after trim - skip this point
               skippedCount++;
+              await writeApi.close();
               continue;
             }
           }
@@ -84,6 +88,7 @@ export class Influx3xClient {
         // Skip this point if it has no fields (InfluxDB requires at least one field)
         if (!hasField) {
           skippedCount++;
+          await writeApi.close();
           continue;
         }
 
@@ -104,18 +109,25 @@ export class Influx3xClient {
         });
 
         writeApi.writePoint(point);
+        await writeApi.close();
+        successCount++;
       } catch (error) {
         // Skip malformed points but log them
-        console.warn(`Skipping malformed point: ${error instanceof Error ? error.message : String(error)}`);
+        if (skippedCount < 10) {
+          console.warn(`Skipping malformed point: ${error instanceof Error ? error.message : String(error)}`);
+        }
         skippedCount++;
+        try {
+          await writeApi.close();
+        } catch (e) {
+          // Ignore close errors
+        }
       }
     }
 
     if (skippedCount > 0) {
-      console.log(`Skipped ${skippedCount} points with no valid fields`);
+      console.log(`Batch complete: ${successCount} written, ${skippedCount} skipped`);
     }
-
-    await writeApi.close();
   }
 
   async getRowCount(): Promise<number> {
