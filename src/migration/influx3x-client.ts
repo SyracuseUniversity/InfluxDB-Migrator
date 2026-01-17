@@ -33,9 +33,17 @@ export class Influx3xClient {
       // In 2.x, data comes as: _field="P", _value=123.45
       // In 3.x, we want: P=123.45 as a field
       const fieldName = record._field;
-      const fieldValue = record._value;
+      let fieldValue = record._value;
 
-      if (fieldName && fieldValue !== undefined && fieldValue !== null) {
+      if (fieldName && fieldValue !== undefined && fieldValue !== null && fieldValue !== '') {
+        // Try to parse string numbers to actual numbers
+        if (typeof fieldValue === 'string') {
+          const parsedNum = parseFloat(fieldValue);
+          if (!isNaN(parsedNum)) {
+            fieldValue = parsedNum;
+          }
+        }
+
         // Add the field using the _field name and _value
         if (typeof fieldValue === 'number') {
           if (Number.isInteger(fieldValue)) {
@@ -43,8 +51,9 @@ export class Influx3xClient {
           } else {
             point.floatField(fieldName, fieldValue);
           }
-        } else if (typeof fieldValue === 'boolean') {
-          point.booleanField(fieldName, fieldValue);
+        } else if (typeof fieldValue === 'boolean' || fieldValue === 'true' || fieldValue === 'false') {
+          const boolVal = fieldValue === true || fieldValue === 'true';
+          point.booleanField(fieldName, boolVal);
         } else if (typeof fieldValue === 'string') {
           point.stringField(fieldName, fieldValue);
         }
