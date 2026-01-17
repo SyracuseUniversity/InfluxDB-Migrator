@@ -367,7 +367,10 @@ export class QueryTransformer {
 
     const trimmed = expr.trim();
     if (trimmed === 'v.windowPeriod' || trimmed === '$__interval') {
-      return "INTERVAL '$__interval'";
+      return "INTERVAL '$__interval_ms millisecond'";
+    }
+    if (trimmed === '$__interval_ms') {
+      return "INTERVAL '$__interval_ms millisecond'";
     }
 
     const intervalMatch = trimmed.match(/^(\d+)([smhdw])$/);
