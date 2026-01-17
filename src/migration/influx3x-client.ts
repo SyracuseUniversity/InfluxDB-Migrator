@@ -114,15 +114,6 @@ export class Influx3xClient {
       return;
     }
 
-    // Debug: Log first few lines to see format
-    console.log(`\n=== DEBUG: First 3 line protocol lines ===`);
-    lines.slice(0, 3).forEach((line, idx) => {
-      console.log(`Line ${idx + 1}: ${line}`);
-      // Show hex codes for debugging
-      const hexChars = line.split('').map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join(' ');
-      console.log(`Hex: ${hexChars.substring(0, 200)}...`);
-    });
-    console.log(`=== END DEBUG (${lines.length} total lines) ===\n`);
 
     // Use curl via child_process - this is proven to work
     const body = lines.join('\n');
