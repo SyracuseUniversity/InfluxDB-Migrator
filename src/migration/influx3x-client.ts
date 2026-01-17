@@ -117,16 +117,19 @@ export class Influx3xClient {
 
     // Use curl via child_process - this is proven to work
     const body = lines.join('\n');
-    const tmpFile = path.join(os.tmpdir(), `influx_write_${Date.now()}.txt`);
+    const tmpFile = '/tmp/influx_debug.txt'; // Fixed location for debugging
 
     try {
       // Write line protocol to temp file
       fs.writeFileSync(tmpFile, body);
+      console.log(`DEBUG: Wrote ${lines.length} lines to ${tmpFile}`);
+      console.log(`DEBUG: First line: ${lines[0]}`);
 
       // Build curl command
       const url = `http://${this.config.host}:${this.config.port}/api/v2/write?bucket=${this.config.database}&precision=ns`;
       const authHeader = this.config.token ? `-H "Authorization: Bearer ${this.config.token}"` : '';
       const curlCmd = `curl -s -w "\\n%{http_code}" -X POST "${url}" ${authHeader} -H "Content-Type: text/plain" --data-binary @${tmpFile}`;
+      console.log(`DEBUG: curl command: ${curlCmd}`);
 
       const result = execSync(curlCmd, { encoding: 'utf-8', timeout: 60000 });
       const lines_result = result.trim().split('\n');
@@ -140,13 +143,10 @@ export class Influx3xClient {
       } else {
         throw new Error(`Write failed: HTTP ${httpCode} - ${responseBody}`);
       }
-    } finally {
-      // Clean up temp file
-      try {
-        fs.unlinkSync(tmpFile);
-      } catch (e) {
-        // Ignore cleanup errors
-      }
+    } catch (e) {
+      // Don't delete file on error so we can inspect it
+      console.log(`DEBUG: File preserved at ${tmpFile} for inspection`);
+      throw e;
     }
   }
 
