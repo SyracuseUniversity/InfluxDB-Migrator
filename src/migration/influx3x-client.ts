@@ -34,6 +34,7 @@ export class Influx3xClient {
       // In 3.x, we want: P=123.45 as a field
       const fieldName = record._field;
       let fieldValue = record._value;
+      let hasField = false;
 
       if (fieldName && fieldValue !== undefined && fieldValue !== null && fieldValue !== '') {
         // Try to parse string numbers to actual numbers
@@ -48,15 +49,24 @@ export class Influx3xClient {
         if (typeof fieldValue === 'number') {
           if (Number.isInteger(fieldValue)) {
             point.intField(fieldName, fieldValue);
+            hasField = true;
           } else {
             point.floatField(fieldName, fieldValue);
+            hasField = true;
           }
         } else if (typeof fieldValue === 'boolean' || fieldValue === 'true' || fieldValue === 'false') {
           const boolVal = fieldValue === true || fieldValue === 'true';
           point.booleanField(fieldName, boolVal);
+          hasField = true;
         } else if (typeof fieldValue === 'string') {
           point.stringField(fieldName, fieldValue);
+          hasField = true;
         }
+      }
+
+      // Skip this point if it has no fields (InfluxDB requires at least one field)
+      if (!hasField) {
+        continue;
       }
 
       // Add tags (non-underscore fields that aren't system fields)
@@ -67,13 +77,15 @@ export class Influx3xClient {
 
         const value = record[key];
         // All non-system fields from 2.x are tags in 3.x
-        if (typeof value === 'string') {
-          point.tag(key, value);
-        } else if (typeof value === 'number') {
-          // Convert numeric tags to strings
-          point.tag(key, value.toString());
-        } else if (typeof value === 'boolean') {
-          point.tag(key, value.toString());
+        if (value !== undefined && value !== null && value !== '') {
+          if (typeof value === 'string') {
+            point.tag(key, value);
+          } else if (typeof value === 'number') {
+            // Convert numeric tags to strings
+            point.tag(key, value.toString());
+          } else if (typeof value === 'boolean') {
+            point.tag(key, value.toString());
+          }
         }
       });
 
