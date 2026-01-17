@@ -116,7 +116,8 @@ export class Influx3xClient {
     console.log(`=== END DEBUG (${lines.length} total lines) ===\n`);
 
     // Write using HTTP API
-    const url = `http://${this.config.host}:${this.config.port}/api/v2/write?db=${this.config.database}`;
+    // InfluxDB 3.x uses 'bucket' parameter instead of 'db'
+    const url = `http://${this.config.host}:${this.config.port}/api/v2/write?bucket=${this.config.database}`;
     const headers: any = { 'Content-Type': 'text/plain' };
     if (this.config.token) {
       headers['Authorization'] = `Bearer ${this.config.token}`;
