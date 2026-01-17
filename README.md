@@ -72,7 +72,7 @@ The config file should look like this (see `config.example.json`):
   },
   "destination": {
     "host": "localhost",
-    "port": 8086,
+    "port": 8181,
     "token": "your-3x-token",
     "database": "your-database"
   },
@@ -113,7 +113,7 @@ export INFLUX_2X_BUCKET=your-bucket
 
 # Destination InfluxDB 3.x
 export INFLUX_3X_HOST=localhost
-export INFLUX_3X_PORT=8086
+export INFLUX_3X_PORT=8181
 export INFLUX_3X_TOKEN=your-3x-token
 export INFLUX_3X_DATABASE=your-database
 
@@ -148,7 +148,7 @@ influx-migrate migrate [options]
 - `--source-org <org>` - Source InfluxDB 2.x organization
 - `--source-bucket <bucket>` - Source InfluxDB 2.x bucket
 - `--dest-host <host>` - Destination InfluxDB 3.x host
-- `--dest-port <port>` - Destination InfluxDB 3.x port (default: 8086)
+- `--dest-port <port>` - Destination InfluxDB 3.x port (default: 8181)
 - `--dest-token <token>` - Destination InfluxDB 3.x token
 - `--dest-database <database>` - Destination InfluxDB 3.x database
 - `--start-time <time>` - Start time (e.g., -7d, 2024-01-01)

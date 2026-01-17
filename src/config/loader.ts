@@ -19,7 +19,7 @@ export class ConfigLoader {
     if (process.env.INFLUX_3X_HOST) {
       config.destination = {
         host: process.env.INFLUX_3X_HOST,
-        port: parseInt(process.env.INFLUX_3X_PORT || '8086', 10),
+        port: parseInt(process.env.INFLUX_3X_PORT || '8181', 10),
         token: process.env.INFLUX_3X_TOKEN || '',
         database: process.env.INFLUX_3X_DATABASE || ''
       };
@@ -64,7 +64,7 @@ export class ConfigLoader {
     if (flags.destHost) {
       config.destination = {
         host: flags.destHost,
-        port: flags.destPort || 8086,
+        port: flags.destPort || 8181,
         token: flags.destToken || '',
         database: flags.destDatabase || ''
       };

@@ -8,7 +8,7 @@
   },
   "destination": {
     "host": "localhost",
-    "port": 8086,
+    "port": 8181,
     "token": "your-influxdb-3x-token-here",
     "database": "your-database-name"
   },
