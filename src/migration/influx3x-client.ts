@@ -108,6 +108,13 @@ export class Influx3xClient {
       return;
     }
 
+    // Debug: Log first few lines to see format
+    console.log(`\n=== DEBUG: First 3 line protocol lines ===`);
+    lines.slice(0, 3).forEach((line, idx) => {
+      console.log(`Line ${idx + 1}: ${line}`);
+    });
+    console.log(`=== END DEBUG (${lines.length} total lines) ===\n`);
+
     // Write using HTTP API
     const url = `http://${this.config.host}:${this.config.port}/api/v2/write?db=${this.config.database}`;
     const headers: any = { 'Content-Type': 'text/plain' };
@@ -121,6 +128,10 @@ export class Influx3xClient {
         console.log(`Batch complete: ${lines.length} written, ${skippedCount} skipped`);
       }
     } catch (error) {
+      // Log the full error response
+      if (axios.isAxiosError(error) && error.response) {
+        console.error('HTTP Error Response:', JSON.stringify(error.response.data, null, 2));
+      }
       throw new Error(`Write failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
